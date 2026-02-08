@@ -37,7 +37,7 @@ class ChatSession(BaseModel):
     title: str
     messages: List[dict]
     createdAt: str
-    deployed_tools: Optional[Dict[str, dict]] = None
+    deployed_resources: Optional[Dict[str, dict]] = None
 
 
 class ChatListResponse(BaseModel):
@@ -53,7 +53,7 @@ class ChatCreateRequest(BaseModel):
 class ChatUpdateRequest(BaseModel):
     messages: Optional[List[dict]] = None
     title: Optional[str] = None
-    deployed_tools: Optional[Dict[str, dict]] = None
+    deployed_resources: Optional[Dict[str, dict]] = None
 
 
 def load_chats() -> List[dict]:
@@ -81,7 +81,7 @@ class ChatRequest(BaseModel):
     messages: list
     model: str = "kimi-k2.5"
     temperature: float = 1.0
-    deployed_tools: Optional[Dict[str, dict]] = None
+    deployed_resources: Optional[Dict[str, dict]] = None
 
 
 class ChatResponse(BaseModel):
@@ -162,7 +162,7 @@ async def submit_chat(request: ChatRequest):
         messages=request.messages,
         model=request.model,
         temperature=request.temperature,
-        deployed_tools=request.deployed_tools
+        deployed_resources=request.deployed_resources
     )
     
     # Create queue for this job's output
@@ -236,7 +236,7 @@ async def create_chat(request: ChatCreateRequest):
         "title": request.title,
         "messages": [],
         "createdAt": request.createdAt,
-        "deployed_tools": {}
+        "deployed_resources": {}
     }
     chats.insert(0, chat)
     save_chats(chats)
@@ -256,7 +256,7 @@ async def get_chat(chat_id: str):
 
 @app.put("/api/chats/{chat_id}")
 async def update_chat(chat_id: str, request: ChatUpdateRequest):
-    """Update a chat session (messages, title, and/or deployed_tools)"""
+    """Update a chat session (messages, title, and/or deployed_resources)"""
     chats = load_chats()
     for chat in chats:
         if chat["id"] == chat_id:
@@ -264,8 +264,8 @@ async def update_chat(chat_id: str, request: ChatUpdateRequest):
                 chat["messages"] = request.messages
             if request.title is not None:
                 chat["title"] = request.title
-            if request.deployed_tools is not None:
-                chat["deployed_tools"] = request.deployed_tools
+            if request.deployed_resources is not None:
+                chat["deployed_resources"] = request.deployed_resources
             save_chats(chats)
             logger.info(f"Updated chat: {chat_id}")
             return {"status": "updated", "chat": chat}

@@ -1,9 +1,9 @@
 /**
- * Folder Plugin
+ * Folder Driver
  * A tool for browsing and managing folders
  */
 
-const FolderPlugin = {
+const FolderDriver = {
     // Metadata
     metadata: {
         id: 'folder',
@@ -15,11 +15,11 @@ const FolderPlugin = {
         </svg>`
     },
 
-    // Reference to the ChatApp instance (set by app.js)
+    // Reference to the ChatApp instance (set by app.js during driver loading)
     app: null,
 
-    // Store the current folder configuration
-    currentConfig: null,
+    // Store deployed folder instances: [{ resourceId, config }, ...]
+    deployedInstances: [],
 
     // Show modal dialog for folder path input
     showFolderInputModal: function() {
@@ -112,33 +112,25 @@ const FolderPlugin = {
             
             // Deploy the tool if a path was entered and app reference exists
             if (this.app) {
-                // Store the config locally
-                this.currentConfig = folderData;
+                // Generate a unique resource ID
+                const resourceId = `folder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                 
-                // Deploy the tool visually
-                this.app.deployTool(this.metadata.id);
+                // Store the config with type and resource ID
+                const config = {
+                    ...folderData,
+                    type: 'folder',
+                    resource_id: resourceId
+                };
+                
+                // Add to deployed instances
+                this.deployedInstances.push({ resourceId, config });
+                
+                // Deploy the resource visually
+                this.app.deployResource(resourceId, this.metadata.id, config);
                 
                 // Save to server if we have a current chat
-                if (this.app.currentChatId) {
-                    const deployedTools = {
-                        [this.metadata.id]: folderData
-                    };
-                    
-                    try {
-                        const response = await fetch(`/api/chats/${this.app.currentChatId}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ deployed_tools: deployedTools })
-                        });
-                        
-                        if (response.ok) {
-                            console.log(`Saved deployed tool ${this.metadata.id}:`, folderData);
-                        } else {
-                            console.error('Failed to save deployed tool to server');
-                        }
-                    } catch (error) {
-                        console.error('Error saving deployed tool:', error);
-                    }
+                if (this.app.currentChatId && this.app.saveDeployedResources) {
+                    await this.app.saveDeployedResources();
                 }
             }
             
@@ -149,42 +141,40 @@ const FolderPlugin = {
         }
     },
 
-    // Called when the tool is deployed (added to deployed tools)
-    onDeploy: function() {
-        console.log('Folder tool deployed');
-        // Try to load config from chat if not already set
-        if (!this.currentConfig && this.app && this.app.currentChatId) {
-            const chat = this.app.chats.find(c => c.id === this.app.currentChatId);
-            if (chat && chat.deployed_tools && chat.deployed_tools[this.metadata.id]) {
-                this.currentConfig = chat.deployed_tools[this.metadata.id];
+    // Called when a resource instance is undeployed (removed from deployed resources)
+    onUndeploy: function(resourceId) {
+        console.log('Folder resource undeployed:', resourceId);
+        // Remove from deployed instances
+        this.deployedInstances = this.deployedInstances.filter(inst => inst.resourceId !== resourceId);
+    },
+    
+    // Called when loading a chat with saved deployed resources
+    loadDeployedResources: function(deployedResources) {
+        this.deployedInstances = [];
+        // deployedResources is an object like { resourceId: { type, name, path, resource_id } }
+        for (const [resourceId, config] of Object.entries(deployedResources)) {
+            if (config.type === 'folder') {
+                this.deployedInstances.push({ resourceId, config });
             }
         }
+        return this.deployedInstances.length;
     },
 
-    // Called when the tool is undeployed (removed from deployed tools)
-    onUndeploy: function() {
-        console.log('Folder tool undeployed');
-        this.currentConfig = null;
+    // Get all deployed resource configurations for the backend
+    getAllToolConfigs: function() {
+        const configs = {};
+        this.deployedInstances.forEach(inst => {
+            configs[inst.resourceId] = inst.config;
+        });
+        return configs;
     },
-
-    // Get the current tool configuration for the backend
-    getToolConfig: function() {
-        // First check local config (set during deployment)
-        if (this.currentConfig) {
-            return this.currentConfig;
-        }
-        
-        // Try to get the saved config from the current chat
-        if (this.app && this.app.currentChatId) {
-            const chat = this.app.chats.find(c => c.id === this.app.currentChatId);
-            if (chat && chat.deployed_tools && chat.deployed_tools[this.metadata.id]) {
-                return chat.deployed_tools[this.metadata.id];
-            }
-        }
-        // Return default config if not found
-        return { name: this.metadata.name, path: null };
+    
+    // Get a single resource configuration (for backward compatibility)
+    getToolConfig: function(resourceId) {
+        const instance = this.deployedInstances.find(inst => inst.resourceId === resourceId);
+        return instance ? instance.config : null;
     }
 };
 
 // ES Module export
-export default FolderPlugin;
+export default FolderDriver;

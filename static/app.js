@@ -6,13 +6,13 @@ class ChatApp {
         this.isStreaming = false;
         this.chats = []; // Array of chat sessions
         this.currentChatId = null;
-        this.deployedTools = []; // Array of deployed tools
-        this.availablePlugins = {}; // Map of available plugins by id
+        this.deployedResources = []; // Array of deployed resource instances: [{resourceId, driverId, config}, ...]
+        this.availableDrivers = {}; // Map of available drivers by id
         
         this.initElements();
-        this.loadPlugins().then(() => {
+        this.loadDrivers().then(() => {
             this.initEventListeners();
-            this.loadModels();
+
             this.autoResizeTextarea();
             this.loadChatHistory();
         });
@@ -21,63 +21,66 @@ class ChatApp {
         window.addEventListener('popstate', (e) => {
             this.handleUrlChange();
         });
+        
+        // Initialize dark mode
+        this.initDarkMode();
     }
     
-    async loadPlugins() {
-        // Define the plugins to load
-        const pluginList = ['folder'];
+    async loadDrivers() {
+        // Define the drivers to load
+        const driverList = ['folder'];
         
-        for (const pluginName of pluginList) {
+        for (const driverName of driverList) {
             try {
-                // Dynamically import the plugin
-                const module = await import(`/static/plugins/${pluginName}/${pluginName}.js`);
-                const plugin = module.default || module[Object.keys(module)[0]];
+                // Dynamically import the driver
+                const module = await import(`/static/resourcedrivers/${driverName}/${driverName}.js`);
+                const driver = module.default || module[Object.keys(module)[0]];
                 
-                if (plugin && plugin.metadata) {
-                    this.availablePlugins[plugin.metadata.id] = plugin;
-                    // Set app reference on plugin for callbacks
-                    plugin.app = this;
-                    console.log(`Loaded plugin: ${plugin.metadata.name}`);
+                if (driver && driver.metadata) {
+                    this.availableDrivers[driver.metadata.id] = driver;
+                    // Set app reference on driver for callbacks
+                    driver.app = this;
+                    console.log(`Loaded driver: ${driver.metadata.name}`);
                 }
             } catch (error) {
-                console.error(`Failed to load plugin ${pluginName}:`, error);
+                console.error(`Failed to load driver ${driverName}:`, error);
             }
         }
         
-        // Render available tools
-        this.renderAvailableTools();
+        // Render available resources
+        this.renderAvailableResources();
     }
     
-    renderAvailableTools() {
-        if (!this.availableToolsList) return;
+    renderAvailableResources() {
+        if (!this.availableResourcesList) return;
         
-        const plugins = Object.values(this.availablePlugins);
+        const drivers = Object.values(this.availableDrivers);
         
-        if (plugins.length === 0) {
-            this.availableToolsList.innerHTML = `
+        if (drivers.length === 0) {
+            this.availableResourcesList.innerHTML = `
                 <div class="text-center text-gray-400 dark:text-gray-500 text-sm py-4">
-                    No tools available
+                    No resources available
                 </div>
             `;
             return;
         }
         
-        this.availableToolsList.innerHTML = plugins.map(plugin => {
+        this.availableResourcesList.innerHTML = drivers.map(driver => {
             return `
-                <button class="available-tool-btn w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors text-left" data-plugin-id="${plugin.metadata.id}">
-                    ${plugin.metadata.icon}
-                    <span class="text-sm font-medium">${plugin.metadata.name}</span>
+                <button class="available-resource-btn w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors text-left" data-driver-id="${driver.metadata.id}">
+                    ${driver.metadata.icon}
+                    <span class="text-sm font-medium">${driver.metadata.name}</span>
                 </button>
             `;
         }).join('');
         
         // Add click handlers
-        this.availableToolsList.querySelectorAll('.available-tool-btn').forEach(btn => {
+        this.availableResourcesList.querySelectorAll('.available-resource-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const pluginId = btn.dataset.pluginId;
-                const plugin = this.availablePlugins[pluginId];
-                if (plugin && plugin.onAvailableClick) {
-                    plugin.onAvailableClick();
+                const driverId = btn.dataset.driverId;
+                const driver = this.availableDrivers[driverId];
+                if (driver && driver.onAvailableClick) {
+                    driver.onAvailableClick();
                 }
             });
         });
@@ -110,8 +113,12 @@ class ChatApp {
         this.sidebarNewChatBtn = document.getElementById('sidebarNewChatBtn');
         this.modelSelect = document.getElementById('modelSelect');
         this.chatHistoryList = document.getElementById('chatHistoryList');
-        this.deployedToolsList = document.getElementById('deployedToolsList');
-        this.availableToolsList = document.getElementById('availableToolsList');
+        this.deployedResourcesList = document.getElementById('deployedResourcesList');
+        this.availableResourcesList = document.getElementById('availableResourcesList');
+        this.darkModeToggle = document.getElementById('darkModeToggle');
+        this.sunIcon = document.getElementById('sunIcon');
+        this.moonIcon = document.getElementById('moonIcon');
+        this.hljsTheme = document.getElementById('hljs-theme');
     }
     
     async loadChatHistory() {
@@ -160,6 +167,37 @@ class ChatApp {
         }
     }
     
+    async saveDeployedResources() {
+        if (!this.currentChatId) return;
+        
+        // Build deployed_resources object
+        const deployedResourcesData = {};
+        for (const { resourceId, driverId, config } of this.deployedResources) {
+            if (config) {
+                deployedResourcesData[resourceId] = config;
+            } else {
+                const driver = this.availableDrivers[driverId];
+                deployedResourcesData[resourceId] = { type: driverId, name: driver?.metadata?.name || driverId };
+            }
+        }
+        
+        try {
+            const response = await fetch(`/api/chats/${this.currentChatId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ deployed_resources: deployedResourcesData })
+            });
+            
+            if (response.ok) {
+                console.log('Saved deployed resources:', deployedResourcesData);
+            } else {
+                console.error('Failed to save deployed resources to server');
+            }
+        } catch (error) {
+            console.error('Error saving deployed resources:', error);
+        }
+    }
+    
     initEventListeners() {
         // Send message
         this.sendBtn.addEventListener('click', () => this.sendMessage());
@@ -178,59 +216,109 @@ class ChatApp {
         
         // Auto-resize textarea
         this.messageInput.addEventListener('input', () => this.autoResizeTextarea());
+        
+        // Dark mode toggle
+        this.darkModeToggle.addEventListener('click', () => this.toggleDarkMode());
     }
     
-    deployTool(pluginId) {
-        // Check if plugin exists
-        const plugin = this.availablePlugins[pluginId];
-        if (!plugin) {
-            console.error(`Plugin ${pluginId} not found`);
+    initDarkMode() {
+        // Check for saved preference or system preference
+        const savedMode = localStorage.getItem('darkMode');
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        
+        if (savedMode === 'true' || (savedMode === null && systemPrefersDark)) {
+            this.enableDarkMode();
+        } else {
+            this.disableDarkMode();
+        }
+    }
+    
+    toggleDarkMode() {
+        if (document.documentElement.classList.contains('dark')) {
+            this.disableDarkMode();
+        } else {
+            this.enableDarkMode();
+        }
+    }
+    
+    enableDarkMode() {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('darkMode', 'true');
+        this.updateDarkModeIcons(true);
+        this.updateHljsTheme(true);
+    }
+    
+    disableDarkMode() {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('darkMode', 'false');
+        this.updateDarkModeIcons(false);
+        this.updateHljsTheme(false);
+    }
+    
+    updateDarkModeIcons(isDark) {
+        if (isDark) {
+            this.sunIcon.classList.remove('hidden');
+            this.moonIcon.classList.add('hidden');
+        } else {
+            this.sunIcon.classList.add('hidden');
+            this.moonIcon.classList.remove('hidden');
+        }
+    }
+    
+    updateHljsTheme(isDark) {
+        if (this.hljsTheme) {
+            this.hljsTheme.href = isDark
+                ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
+                : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+        }
+    }
+    
+    deployResource(resourceId, driverId, config = null) {
+        // Check if driver exists
+        const driver = this.availableDrivers[driverId];
+        if (!driver) {
+            console.error(`Driver ${driverId} not found`);
             return;
         }
         
-        // Check if already deployed
-        if (this.deployedTools.includes(pluginId)) {
-            console.log(`${plugin.metadata.name} tool already deployed`);
+        // Check if already deployed (by resourceId)
+        if (this.deployedResources.some(r => r.resourceId === resourceId)) {
+            console.log(`Resource ${resourceId} already deployed`);
             return;
         }
         
-        this.deployedTools.push(pluginId);
+        // Add the resource instance
+        this.deployedResources.push({ resourceId, driverId, config });
         
-        // Call plugin's onDeploy callback
-        if (plugin.onDeploy) {
-            plugin.onDeploy();
-        }
-        
-        this.renderDeployedTools();
+        this.renderDeployedResources();
     }
     
-    renderDeployedTools() {
-        if (!this.deployedToolsList) return;
+    renderDeployedResources() {
+        if (!this.deployedResourcesList) return;
         
-        if (this.deployedTools.length === 0) {
-            this.deployedToolsList.innerHTML = `
+        if (this.deployedResources.length === 0) {
+            this.deployedResourcesList.innerHTML = `
                 <div class="text-center text-gray-400 dark:text-gray-500 text-sm py-4">
-                    No tools deployed
+                    No resources deployed
                 </div>
             `;
             return;
         }
         
-        this.deployedToolsList.innerHTML = this.deployedTools.map(pluginId => {
-            const plugin = this.availablePlugins[pluginId];
-            if (!plugin) return '';
+        this.deployedResourcesList.innerHTML = this.deployedResources.map(({ resourceId, driverId, config }) => {
+            const driver = this.availableDrivers[driverId];
+            if (!driver) return '';
             
-            // Get tool config to display params (e.g., folder path)
-            const config = plugin.getToolConfig ? plugin.getToolConfig() : { name: plugin.metadata.name };
-            const displayName = config.name || plugin.metadata.name;
-            const paramText = config.path ? `<span class="text-xs text-blue-600 dark:text-blue-400 truncate max-w-[150px]">${config.path}</span>` : '';
+            // Use config for display
+            const displayName = config?.name || driver.metadata.name;
+            const paramText = config?.path ? `<span class="text-xs text-blue-600 dark:text-blue-400 truncate max-w-[150px]">${config.path}</span>` : '';
             
             return `
                 <div class="flex flex-col gap-1 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300">
                     <div class="flex items-center gap-2">
-                        ${plugin.metadata.icon}
+                        ${driver.metadata.icon}
                         <span class="flex-1 truncate text-sm font-medium">${displayName}</span>
-                        <button class="undeploy-tool-btn p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded transition-all" data-tool="${pluginId}">
+                        <button class="undeploy-resource-btn p-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded transition-all" data-resource="${resourceId}">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                             </svg>
@@ -242,25 +330,28 @@ class ChatApp {
         }).join('');
         
         // Add undeploy handlers
-        this.deployedToolsList.querySelectorAll('.undeploy-tool-btn').forEach(btn => {
+        this.deployedResourcesList.querySelectorAll('.undeploy-resource-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const tool = btn.dataset.tool;
-                this.undeployTool(tool);
+                const resourceId = btn.dataset.resource;
+                this.undeployResource(resourceId);
             });
         });
     }
     
-    undeployTool(pluginId) {
-        this.deployedTools = this.deployedTools.filter(t => t !== pluginId);
+    undeployResource(resourceId) {
+        const resource = this.deployedResources.find(r => r.resourceId === resourceId);
+        if (!resource) return;
         
-        // Call plugin's onUndeploy callback
-        const plugin = this.availablePlugins[pluginId];
-        if (plugin && plugin.onUndeploy) {
-            plugin.onUndeploy();
+        this.deployedResources = this.deployedResources.filter(r => r.resourceId !== resourceId);
+        
+        // Call driver's onUndeploy callback with resourceId
+        const driver = this.availableDrivers[resource.driverId];
+        if (driver && driver.onUndeploy) {
+            driver.onUndeploy(resourceId);
         }
         
-        this.renderDeployedTools();
+        this.renderDeployedResources();
     }
     
     renderChatHistory() {
@@ -347,22 +438,28 @@ class ChatApp {
         this.currentChatId = chatId;
         this.messages = [...chat.messages];
         
-        // Load deployed tools from chat data
-        this.deployedTools = [];
-        if (chat.deployed_tools) {
-            // deployed_tools is an object like { tool_id: { name, ...params } }
-            for (const [toolId, toolConfig] of Object.entries(chat.deployed_tools)) {
-                if (this.availablePlugins[toolId]) {
-                    this.deployedTools.push(toolId);
-                    // Call onDeploy for each loaded tool
-                    const plugin = this.availablePlugins[toolId];
-                    if (plugin.onDeploy) {
-                        plugin.onDeploy();
+        // Load deployed resources from chat data
+        this.deployedResources = [];
+        if (chat.deployed_resources) {
+            // deployed_resources is an object like { resource_id: { type, name, path, ...params } }
+            for (const [resourceId, resourceConfig] of Object.entries(chat.deployed_resources)) {
+                const resourceType = resourceConfig?.type;
+                if (resourceType && this.availableDrivers[resourceType]) {
+                    const driver = this.availableDrivers[resourceType];
+                    // Add to deployed resources
+                    this.deployedResources.push({
+                        resourceId,
+                        driverId: resourceType,
+                        config: resourceConfig
+                    });
+                    // Load into driver if it has the method
+                    if (driver.loadDeployedResources) {
+                        driver.loadDeployedResources({ [resourceId]: resourceConfig });
                     }
                 }
             }
         }
-        this.renderDeployedTools();
+        this.renderDeployedResources();
         
         this.renderMessages();
         this.renderChatHistory();
@@ -446,21 +543,6 @@ class ChatApp {
         this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 128) + 'px';
     }
     
-    async loadModels() {
-        try {
-            const response = await fetch('/models');
-            const data = await response.json();
-            
-            if (data.data && data.data.length > 0) {
-                this.modelSelect.innerHTML = data.data
-                    .map(m => `<option value="${m.id}">${m.id}</option>`)
-                    .join('');
-            }
-        } catch (error) {
-            console.error('Failed to load models:', error);
-        }
-    }
-    
     async sendMessage() {
         const content = this.messageInput.value.trim();
         if (!content || this.isStreaming) return;
@@ -485,14 +567,14 @@ class ChatApp {
         this.sendBtn.disabled = true;
         
         try {
-            // Build deployed_tools object from deployed tools
-            const deployedToolsData = {};
-            for (const pluginId of this.deployedTools) {
-                const plugin = this.availablePlugins[pluginId];
-                if (plugin && plugin.getToolConfig) {
-                    deployedToolsData[pluginId] = plugin.getToolConfig();
+            // Build deployed_resources object from deployed resources
+            const deployedResourcesData = {};
+            for (const { resourceId, driverId, config } of this.deployedResources) {
+                if (config) {
+                    deployedResourcesData[resourceId] = config;
                 } else {
-                    deployedToolsData[pluginId] = { name: plugin.metadata.name };
+                    const driver = this.availableDrivers[driverId];
+                    deployedResourcesData[resourceId] = { type: driverId, name: driver?.metadata?.name || driverId };
                 }
             }
             
@@ -504,7 +586,7 @@ class ChatApp {
                     messages: this.messages,
                     model: this.modelSelect.value,
                     temperature: 1.0,
-                    deployed_tools: deployedToolsData
+                    deployed_resources: deployedResourcesData
                 })
             });
             
@@ -672,9 +754,9 @@ class ChatApp {
         this.messages = [];
         this.currentChatId = null;
         
-        // Clear deployed tools
-        this.deployedTools = [];
-        this.renderDeployedTools();
+        // Clear deployed resources
+        this.deployedResources = [];
+        this.renderDeployedResources();
         
         this.chatMessages.innerHTML = `
             <div class="flex gap-4 max-w-4xl mx-auto">
